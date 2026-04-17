@@ -27,18 +27,26 @@ class Settings:
         default_factory=lambda: os.getenv("ALLOWED_ORIGINS", "*").split(",")
     )
 
-    # Rate limiting
+    # Rate limiting — 10 req/min per user
     rate_limit_per_minute: int = field(
-        default_factory=lambda: int(os.getenv("RATE_LIMIT_PER_MINUTE", "20"))
+        default_factory=lambda: int(os.getenv("RATE_LIMIT_PER_MINUTE", "10"))
     )
 
-    # Budget
-    daily_budget_usd: float = field(
-        default_factory=lambda: float(os.getenv("DAILY_BUDGET_USD", "5.0"))
+    # Budget — $10/month per user
+    monthly_budget_usd: float = field(
+        default_factory=lambda: float(os.getenv("MONTHLY_BUDGET_USD", "10.0"))
     )
 
-    # Storage
-    redis_url: str = field(default_factory=lambda: os.getenv("REDIS_URL", ""))
+    # Storage — Redis for stateless design
+    redis_url: str = field(default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+
+    # Conversation history
+    max_history_messages: int = field(
+        default_factory=lambda: int(os.getenv("MAX_HISTORY_MESSAGES", "20"))
+    )
+    history_ttl_seconds: int = field(
+        default_factory=lambda: int(os.getenv("HISTORY_TTL_SECONDS", "86400"))
+    )
 
     def validate(self):
         logger = logging.getLogger(__name__)

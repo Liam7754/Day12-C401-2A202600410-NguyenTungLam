@@ -1,8 +1,8 @@
 #  Delivery Checklist — Day 12 Lab Submission
 
-> **Student Name:** _________________________  
-> **Student ID:** _________________________  
-> **Date:** _________________________
+> **Student Name:** Nguyễn Tùng Lâm 
+> **Student ID:** 2A202600410  
+> **Date:** 17/4/2026
 
 ---
 
@@ -20,47 +20,162 @@ Create a file `MISSION_ANSWERS.md` with your answers to all exercises:
 ## Part 1: Localhost vs Production
 
 ### Exercise 1.1: Anti-patterns found
-1. [Your answer]
-2. [Your answer]
+1. Vấn đề 1: API key hardcode trong code
+2. Vấn đề 2: Không có config management
+3. Vấn đề 3: Print thay vì proper logging
+4. Vấn đề 4: Không có health check endpoint
+5. Vấn đề 5: Port cố định — không đọc từ environment
+
 ...
 
 ### Exercise 1.3: Comparison table
 | Feature | Develop | Production | Why Important? |
-|---------|---------|------------|----------------|
-| Config  | ...     | ...        | ...            |
-...
+|---------|-------------------|------------|-------------------|
+| Config | Hardcode (OPENAI_API_KEY = "sk-...", port=8000) | Env vars qua settings objectvars | Hardcode lộ secret khi push GitHub; env vars → thay đổi config mà không cần sửa code |
+| Health check | 	Không có  | Có /health (liveness) + /ready (readiness) | Platform cloud cần endpoint này để biết container còn sống không → tự động restart khi crash |
+| Logging | print() — log cả secret ra ngoài | JSON structured logging, không log secret | JSON dễ parse bởi log aggregator (Datadog, Loki); print() không có level, không filter được |
+| Shutdown | Đột ngột — không xử lý SIGTERM | Graceful — bắt SIGTERM, hoàn thành request đang chạy rồi mới tắt | Tắt đột ngột → request dang dở bị lỗi; graceful → zero downtime khi deploy/scale |
 
 ## Part 2: Docker
 
 ### Exercise 2.1: Dockerfile questions
-1. Base image: [Your answer]
-2. Working directory: [Your answer]
-...
+1. Base image: FROM python:3.11
+2. Working directory: day12_ha-tang-cloud_va_deployment\02-docker\develop/app
+3. Tại sao COPY requirements.txt trước :
+Docker invalidate cache của một layer khi layer phía trên nó thay đổi. Code thay đổi thường xuyên, requirements.txt thay đổi hiếm → để requirements lên trước để pip install được cache lại.
+4. CMD vs ENTRYPOINT khác nhau thế nào :
+|  | Override được?|	Dùng khi nào |
+|---------|---------|------------|
+CMD| Có |	Script đơn giản, tool linh hoạt |
+ENTRYPOINT|	Không  (chỉ --entrypoint flag) |	Container như một executable cố định |
 
 ### Exercise 2.3: Image size comparison
-- Develop: [X] MB
-- Production: [Y] MB
-- Difference: [Z]%
+- Develop: 424 MB
+- Production: 56.6MB MB
+- Difference: 86.65% smaller
 
 ## Part 3: Cloud Deployment
 
 ### Exercise 3.1: Railway deployment
-- URL: https://your-app.railway.app
-- Screenshot: [Link to screenshot in repo]
+- URL: curl https://testexample-production.up.railway.app/
+- Screenshot: 
 
 ## Part 4: API Security
 
 ### Exercise 4.1-4.3: Test results
-[Paste your test outputs]
+test output (không có key → 401):
+```
+HTTP/1.1 401 Unauthorized
+{"detail":"Missing API key. Include header: X-API-Key: <your-key>"}
+```
+
+Test output (sai key → 403):
+```
+HTTP/1.1 403 Forbidden
+{"detail":"Invalid API key."}
+```
+
+Test output (đúng key → 200):
+```json
+{
+  "question": "Hello",
+  "answer": "Mock response for: Hello"
+}
+```
+
+**Exercise 4.2 — JWT Flow**
+
+1. POST `/token` với username/password → nhận JWT token
+2. Dùng token trong header `Authorization: Bearer <token>` để gọi `/ask`
+3. Server decode token, verify signature, extract user info
+
+**Exercise 4.3 — Rate Limiting**
+
+- **Algorithm:** Sliding Window Counter (dùng deque lưu timestamps)
+- **Limit:** User thường: 10 req/phút | Admin: 100 req/phút
+- **Bypass cho admin:** Dùng `rate_limiter_admin` instance thay vì `rate_limiter_user`
+
+Khi hit limit → 429 Too Many Requests:
+```json
+{
+  "error": "Rate limit exceeded",
+  "limit": 10,
+  "window_seconds": 60,
+  "retry_after_seconds": 45
+}
+```
 
 ### Exercise 4.4: Cost guard implementation
-[Explain your approach]
+**Approach:**
+
+`CostGuard` class trong `cost_guard.py` bảo vệ budget theo 2 tầng:
+
+1. **Per-user daily budget ($1/ngày):** Mỗi user được track riêng qua `UsageRecord`. Khi `total_cost_usd >= daily_budget_usd` → raise `402 Payment Required`.
+
+2. **Global daily budget ($10/ngày):** Tổng cost của tất cả users. Khi vượt → raise `503 Service Unavailable`.
+
+3. **Warning at 80%:** Log warning khi user dùng 80% budget để theo dõi.
 
 ## Part 5: Scaling & Reliability
 
 ### Exercise 5.1-5.5: Implementation notes
-[Your explanations and test results]
+**Exercise 5.1 — Health Checks**
+
+```python
+@app.get("/health")
+def health():
+    return {"status": "ok"}  # Liveness: process còn sống
+
+@app.get("/ready")
+def ready():
+    try:
+        r.ping()           # Check Redis
+        db.execute("SELECT 1")  # Check DB
+        return {"status": "ready"}
+    except:
+        return JSONResponse(status_code=503, content={"status": "not ready"})
 ```
+
+`/health` = liveness probe (container còn chạy không?)
+`/ready` = readiness probe (sẵn sàng nhận traffic chưa?)
+
+**Exercise 5.2 — Graceful Shutdown**
+
+```python
+def shutdown_handler(signum, frame):
+    server.should_exit = True  # Stop accepting new requests
+    # Uvicorn tự hoàn thành requests đang chạy trước khi exit
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, shutdown_handler)
+```
+
+Khi Kubernetes gửi SIGTERM, server hoàn thành request hiện tại rồi mới tắt — không drop request giữa chừng.
+
+**Exercise 5.3 — Stateless Design**
+
+Anti-pattern: lưu `conversation_history` trong memory → mỗi instance có state riêng, scale ra sẽ mất context.
+
+Correct: lưu trong Redis → tất cả instances đều đọc/ghi cùng 1 nơi:
+```python
+history = r.lrange(f"history:{user_id}", 0, -1)
+r.rpush(f"history:{user_id}", new_message)
+```
+
+**Exercise 5.4 — Load Balancing**
+
+```bash
+docker compose up --scale agent=3
+```
+
+Nginx phân tán traffic theo round-robin giữa 3 agent instances. Nếu 1 instance crash, health check phát hiện và Nginx tự loại khỏi pool.
+
+**Exercise 5.5 — Test Stateless**
+
+`test_stateless.py` verify:
+1. Tạo conversation trên instance A
+2. Kill instance A
+3. Tiếp tục conversation → vẫn hoạt động vì history trong Redis, không phải memory của instance A
 
 ---
 
