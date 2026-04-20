@@ -43,5 +43,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
         CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 
-# Shell form so ${PORT} is expanded at container start (Railway sets PORT dynamically)
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
+# exec replaces the shell so uvicorn is PID 1 and receives SIGTERM directly
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
